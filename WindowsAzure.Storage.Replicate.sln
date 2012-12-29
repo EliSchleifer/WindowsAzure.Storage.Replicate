@@ -1,0 +1,30 @@
+﻿
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio 2012
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Replicate", "Replicate\Replicate.csproj", "{ECD5C5AB-80E8-43FE-A766-9EF1975CCCAE}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "FrontEnd", "FrontEnd\FrontEnd.csproj", "{17F7EA2F-460A-4D30-B46F-3478A0DDD4D5}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|Any CPU = Debug|Any CPU
+		Release|Any CPU = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{ECD5C5AB-80E8-43FE-A766-9EF1975CCCAE}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{ECD5C5AB-80E8-43FE-A766-9EF1975CCCAE}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{ECD5C5AB-80E8-43FE-A766-9EF1975CCCAE}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{ECD5C5AB-80E8-43FE-A766-9EF1975CCCAE}.Release|Any CPU.Build.0 = Release|Any CPU
+		{17F7EA2F-460A-4D30-B46F-3478A0DDD4D5}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{17F7EA2F-460A-4D30-B46F-3478A0DDD4D5}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{17F7EA2F-460A-4D30-B46F-3478A0DDD4D5}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{17F7EA2F-460A-4D30-B46F-3478A0DDD4D5}.Release|Any CPU.Build.0 = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(SolutionProperties) = preSolution
+		HideSolutionNode = FALSE
+	EndGlobalSection
+	GlobalSection(SubversionScc) = preSolution
+		Svn-Managed = True
+		Manager = AnkhSVN - Subversion Support for Visual Studio
+	EndGlobalSection
+EndGlobal

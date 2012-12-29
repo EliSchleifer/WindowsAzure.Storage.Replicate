@@ -1,0 +1,14 @@
+#List of ignore patterns
+bin/
+obj/
+debug/
+csx/
+packages/
+*.sdf
+*.opensdf
+*.suo
+*.user
+TestResults/
+*.xap
+*NLog.txt
+App_Data/
