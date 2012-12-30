@@ -7,6 +7,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.WindowsAzure.Storage.Blob;
 using Microsoft.WindowsAzure.Storage.Table;
+using NLog;
 
 namespace WindowsAzure.Storage.Replicate
 {
@@ -88,6 +89,8 @@ namespace WindowsAzure.Storage.Replicate
 
         private DateTime lastChecked = DateTime.MinValue;
 
+        private static Logger logger = LogManager.GetLogger("BlobContainer");
+
         public bool IsReplicated
         {
             get
@@ -102,7 +105,7 @@ namespace WindowsAzure.Storage.Replicate
             this.Source = source;
             this.InProgress = new List<string>();
             this.Finished = new List<string>();
-            this.Failed = new List<string>();
+            this.Failed = new List<string>();            
         }
 
         public void OnTimer()
@@ -167,7 +170,9 @@ namespace WindowsAzure.Storage.Replicate
         }
 
         public void BeginReplicate()
-        {                        
+        {
+            logger.Info("BeginReplicate {0}", Source.Name);
+    
             var replicate = Storage.Replicate;
             var sb = new StringBuilder();
 
@@ -203,6 +208,8 @@ namespace WindowsAzure.Storage.Replicate
                 }
                 token = result.ContinuationToken;
             } while (token != null);
+
+            logger.Info("Copying {0} blobs", InProgress.Count);
 
             var record = new ContainerReplicateOperation()
             {

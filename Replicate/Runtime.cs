@@ -26,6 +26,7 @@ namespace WindowsAzure.Storage.Replicate
     {
         private static Logger logger = LogManager.GetLogger("Runtime");
         private static bool initialized = false;
+        public static MemoryTarget MemoryTarget { get; private set; }
 
         static Runtime()
         {
@@ -47,6 +48,9 @@ namespace WindowsAzure.Storage.Replicate
             fileTarget.MaxArchiveFiles = 10;
             fileTarget.Layout = fileTarget.Layout = NLog.Layouts.Layout.FromString(@"${date:format=MM-dd HH\:mm\:ss} ${logger} | ${message} ${onexception:EXCEPTION\:${exception:format=tostring}}");
 
+            Runtime.MemoryTarget = new MemoryTarget();
+            Runtime.MemoryTarget.Layout = fileTarget.Layout;
+
             //var layout = NLog.Layouts.Layout.FromString(@"${message}${onexception:EXCEPTION OCCURRED:${message} (${callsite:includeSourcePath=true}) ($stacktrace:topFrames=10}) ${exception:format=ToString}");
 
             //TODO does not run in Azure right now
@@ -65,6 +69,7 @@ namespace WindowsAzure.Storage.Replicate
             var split = new SplitGroupTarget();
 
             split.Targets.Add(fileTarget);
+            split.Targets.Add(Runtime.MemoryTarget);
 
             if (mode == RuntimeMode.Test)
             {

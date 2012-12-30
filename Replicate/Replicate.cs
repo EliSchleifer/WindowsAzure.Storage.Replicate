@@ -26,21 +26,28 @@ namespace WindowsAzure.Storage.Replicate
         
         private static Logger logger = LogManager.GetLogger("Replicate");
 
-        public Replicate(string source, string target)
-            : this(CloudStorageAccount.Parse(source), CloudStorageAccount.Parse(target))
+        public Replicate(string source, string target, string backupName)
+            : this(CloudStorageAccount.Parse(source), CloudStorageAccount.Parse(target), backupName)
         {
         }
         
-        public Replicate(CloudStorageAccount source, CloudStorageAccount target)
+        public Replicate(CloudStorageAccount source, CloudStorageAccount target, string backupName)
         {
             this.Source = new Repository(source);
             this.Target = new Repository(target);
-            this.BackupName = string.Format("{0}-{1}-{2}", this.backupPrefix, source.Credentials.AccountName, DateTime.UtcNow.Ticks);
+            if (backupName == null)
+            {
+                this.BackupName = string.Format("{0}-{1}-{2}", this.backupPrefix, source.Credentials.AccountName, DateTime.UtcNow.Ticks);
+            }
+            else
+            {
+                this.BackupName = backupName;
+            }
         }
         
         public void BeginReplicate()
         {
-            Trace.TraceInformation("{0:yyyy MM dd hh:mm:ss} Replicate started.", DateTime.UtcNow);
+            logger.Trace("{0:yyyy MM dd hh:mm:ss} Replicate started.", DateTime.UtcNow);
 
             var table = Target.TableClient.GetTableReference(this.BackupName + "-containers");
             table.CreateIfNotExists();

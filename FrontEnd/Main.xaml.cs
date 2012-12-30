@@ -1,5 +1,6 @@
 ﻿using System;
 using System.Collections.Generic;
+using System.Collections.ObjectModel;
 using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
@@ -24,7 +25,10 @@ namespace WindowsAzure.Storage.Replicate.FrontEnd
     {
         private string source;
         private string target;
+        private string backupName;
         private Replicate replicate;
+
+        public ObservableCollection<string> Logs { get; private set; }
 
         public string Target 
         {
@@ -45,6 +49,16 @@ namespace WindowsAzure.Storage.Replicate.FrontEnd
                 registry.Write("source", value);
             }
         }
+
+        public string BackupName
+        {
+            get { return backupName; }
+            set
+            {
+                source = value;
+                registry.Write("backupName", value);
+            }
+        }
          
         private RegistrySettings registry;
 
@@ -53,9 +67,11 @@ namespace WindowsAzure.Storage.Replicate.FrontEnd
         public Main()
         {
             this.registry = new RegistrySettings(@"Software\WindowAzureReplicator");
-
+            
+            this.backupName = registry.Read("backup_name");
             this.source = registry.Read("source");
             this.target = registry.Read("target");
+            this.Logs = new ObservableCollection<string>();
 
             InitializeComponent();
             this.DataContext = this;            
@@ -63,7 +79,7 @@ namespace WindowsAzure.Storage.Replicate.FrontEnd
 
         private void replicateClick(object sender, RoutedEventArgs e)
         {
-            this.replicate = new Replicate(this.Source, this.Target);
+            this.replicate = new Replicate(this.Source, this.Target, this.BackupName);
             this.replicate.BeginReplicate();
 
             DispatcherTimer dt = new DispatcherTimer()
@@ -82,7 +98,20 @@ namespace WindowsAzure.Storage.Replicate.FrontEnd
             };
 
             dt.Start();
-                
+
+            var lt = new DispatcherTimer()
+            {
+                Interval = TimeSpan.FromMilliseconds(500)
+            };
+            lt.Tick += (ls, le) =>
+            {
+                var logs = Runtime.MemoryTarget.Logs;
+                foreach (var l in logs)
+                {
+                    this.Logs.Add(l);
+                }
+                Runtime.MemoryTarget.Logs.Clear();
+            };
 
         }
     }
