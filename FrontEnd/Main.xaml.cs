@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.Linq;
 using System.Text;
+using System.Threading;
 using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Controls;
@@ -55,8 +56,8 @@ namespace WindowsAzure.Storage.Replicate.FrontEnd
             get { return backupName; }
             set
             {
-                source = value;
-                registry.Write("backupName", value);
+                backupName = value;
+                registry.Write("backup_name", value);
             }
         }
          
@@ -66,6 +67,8 @@ namespace WindowsAzure.Storage.Replicate.FrontEnd
 
         public Main()
         {
+            Runtime.Initialize();
+
             this.registry = new RegistrySettings(@"Software\WindowAzureReplicator");
             
             this.backupName = registry.Read("backup_name");
@@ -75,12 +78,13 @@ namespace WindowsAzure.Storage.Replicate.FrontEnd
 
             InitializeComponent();
             this.DataContext = this;            
+
+
         }
 
         private void replicateClick(object sender, RoutedEventArgs e)
         {
             this.replicate = new Replicate(this.Source, this.Target, this.BackupName);
-            this.replicate.BeginReplicate();
 
             DispatcherTimer dt = new DispatcherTimer()
             {
@@ -89,6 +93,8 @@ namespace WindowsAzure.Storage.Replicate.FrontEnd
 
             dt.Tick += (ds, de) =>
             {
+                this.replicate.OnTimer();
+
                 var containersInProgress = this.replicate.Blobs.InProgress.Count;
                 var containersFinished = this.replicate.Blobs.Finished.Count;
                 var containersTotal = this.replicate.Blobs.Total;
@@ -105,14 +111,19 @@ namespace WindowsAzure.Storage.Replicate.FrontEnd
             };
             lt.Tick += (ls, le) =>
             {
-                var logs = Runtime.MemoryTarget.Logs;
+                IList<string> logs = Runtime.MemoryTarget.Logs;
                 foreach (var l in logs)
                 {
                     this.Logs.Add(l);
                 }
                 Runtime.MemoryTarget.Logs.Clear();
             };
+            lt.Start();
 
+            Task.Factory.StartNew(() =>
+            {
+                this.replicate.BeginReplicate();
+            });
         }
     }
 }

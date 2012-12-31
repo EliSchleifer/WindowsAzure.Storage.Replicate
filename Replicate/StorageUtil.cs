@@ -28,12 +28,27 @@ namespace WindowsAzure.Storage.Replicate
         //    }
         //}
 
-        public static void CopyBlobAsync(Repository source, Repository target, ICloudBlob item)
+        public static void CopyBlobAsync(Repository source, Repository target, ICloudBlob item, string accessSignature)
         {            
             var tc = target.BlobClient.GetContainerReference(item.Container.Name);            
-            var tb = tc.GetBlobReferenceFromServer(item.Name);
-
-            tb.StartCopyFromBlob(item.Uri);                                    
+            
+            ICloudBlob tb = null;
+            if(item.BlobType == BlobType.BlockBlob)
+            {
+                tb = tc.GetBlockBlobReference(item.Name);
+            }
+            else
+            {
+                tb = tc.GetPageBlobReference(item.Name);
+            }
+            if (!string.IsNullOrEmpty(accessSignature))
+            {
+                tb.StartCopyFromBlob(new Uri(item.Uri.AbsoluteUri + accessSignature));
+            }
+            else
+            {
+                tb.StartCopyFromBlob(item.Uri);
+            }
 
                 // Write to table storage this backup operation
 

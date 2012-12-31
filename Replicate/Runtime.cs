@@ -140,6 +140,11 @@ namespace WindowsAzure.Storage.Replicate
         {
             get
             {
+                if (Settings == null)
+                {
+                    return NLog.LogLevel.Debug;
+                }
+
                 string value = Settings.Get("LogLevel", "debug").ToLowerInvariant();
 
                 switch (value)

@@ -22,6 +22,7 @@ namespace WindowsAzure.Storage.Replicate
         {
             this.Replicate = replicate;
             this.InProgress = new Dictionary<string, BlobContainer>();
+            this.Finished = new Dictionary<string, BlobContainer>();
         }
 
         private CloudTable containersTable;
@@ -31,7 +32,7 @@ namespace WindowsAzure.Storage.Replicate
             {
                 if (containersTable == null)
                 {
-                    var name = string.Format("{0}-containers", this.Replicate.BackupName);
+                    var name = string.Format("{0}Containers", this.Replicate.BackupName);
                     var table = Replicate.Target.TableClient.GetTableReference(name);
                     table.CreateIfNotExists();
                     this.containersTable = table;
@@ -52,28 +53,27 @@ namespace WindowsAzure.Storage.Replicate
         {
             BlobContinuationToken token = null;
 
-            int count = 0;
             do
             {
                 var result = Replicate.Source.BlobClient.ListContainersSegmented(token);
-                foreach (var cloudContainer in result.Results)
-                {
-                    if (count > limit)
-                    {
-                        return count;
-                    }
 
+                var containers = result.Results.ToList();
+
+                var supply = containers.Take(Math.Min(limit, containers.Count));
+                
+                Parallel.ForEach(supply, new ParallelOptions() { MaxDegreeOfParallelism = 5 }, cloudContainer =>
+                {                    
                     var c = new BlobContainer(this, cloudContainer);
                     InProgress[cloudContainer.Name] = c;
 
                     c.BeginReplicate();
 
-                    count++;
-                }
+                    Interlocked.Decrement(ref limit);
+                });
                 token = result.ContinuationToken;
-            } while(token != null);
+            } while(token != null && limit > 0);
 
-            return count;
+            return limit;
         }
     }
 
@@ -87,7 +87,7 @@ namespace WindowsAzure.Storage.Replicate
         public List<string> Failed;
         public int Total { get; private set; }
 
-        private DateTime lastChecked = DateTime.MinValue;
+        private DateTime lastChecked = DateTime.MaxValue;
 
         private static Logger logger = LogManager.GetLogger("BlobContainer");
 
@@ -127,12 +127,32 @@ namespace WindowsAzure.Storage.Replicate
                         var blob = dest as ICloudBlob;
                         if (blob.CopyState.Status == CopyStatus.Success)
                         {
+                            var blobRecord = new BlobReplicateOperation()
+                            {
+                                PartitionKey = Source.Name,
+                                RowKey = blob.Name,
+                                Operation = Constants.Copy,
+                                Status = Constants.Finished,
+                                ETag = "*"
+                            };
+                            Storage.ContainersTable.Execute(TableOperation.Replace(blobRecord));                                                
+
                             InProgress.Remove(blob.Name);
                             Finished.Add(blob.Name);
                         }
                         else if (blob.CopyState.Status == CopyStatus.Failed ||
                                 blob.CopyState.Status == CopyStatus.Aborted)
                         {
+                            var blobRecord = new BlobReplicateOperation()
+                            {
+                                PartitionKey = Source.Name,
+                                RowKey = blob.Name,
+                                Operation = Constants.Copy,
+                                Status = Constants.Failed,
+                                ETag = "*"
+                            };
+                            Storage.ContainersTable.Execute(TableOperation.Replace(blobRecord));                                                
+
                             Failed.Add(blob.Name);
                         }
                         else if (blob.CopyState.Status == CopyStatus.Invalid)
@@ -145,6 +165,19 @@ namespace WindowsAzure.Storage.Replicate
                             continue;
                         }
                     }
+
+                    if (InProgress.Count == 0)
+                    {
+                        if (Failed.Count == 0)
+                        {
+                            logger.Info("EndReplicate {0}", Source.Name);
+                        }
+                        else
+                        {
+                            logger.Info("EndReplicate {0} WITH ERRORS", Source.Name);
+                        }
+                    }
+
                     lastChecked = DateTime.UtcNow;
                 }
             });
@@ -176,8 +209,20 @@ namespace WindowsAzure.Storage.Replicate
             var replicate = Storage.Replicate;
             var sb = new StringBuilder();
 
+            string accessSignature = null;
             var permissions = Source.GetPermissions();
             this.Target = replicate.Target.BlobClient.GetContainerReference(Source.Name);
+
+            if (permissions.PublicAccess == BlobContainerPublicAccessType.Off)
+            {
+                // Must use sharedaccesssignature to copy
+                var policy = new SharedAccessBlobPolicy() 
+                { 
+                    SharedAccessExpiryTime = DateTime.UtcNow.AddHours(12),
+                    Permissions = SharedAccessBlobPermissions.Read | SharedAccessBlobPermissions.List
+                };
+                accessSignature = Source.GetSharedAccessSignature(policy);
+            }
 
             this.Target.CreateIfNotExists();
             this.Target.SetPermissions(permissions);
@@ -187,39 +232,78 @@ namespace WindowsAzure.Storage.Replicate
             {
                 var result = Source.ListBlobsSegmented(token);
                 
-                foreach (var blobItem in result.Results.OfType<ICloudBlob>())
+                // Get all records and only call copy on those that don't have records or failed
+                var exQuery =
+                new TableQuery<BlobReplicateOperation>().Where(TableQuery.GenerateFilterCondition("PartitionKey", QueryComparisons.Equal,
+                                                                             Source.Name));
+
+                var records = Storage.ContainersTable.ExecuteQuery(exQuery).ToList();
+
+                Parallel.ForEach(result.Results.OfType<ICloudBlob>(), new ParallelOptions() { MaxDegreeOfParallelism = 10 }, blobItem =>
                 {
-                    StorageUtil.CopyBlobAsync(replicate.Source, replicate.Target, blobItem);
-
-                    InProgress.Add(blobItem.Name);
-
-                    var blobRecord = new BlobReplicateOperation()
+                    var record = records.Where(r => r.RowKey == blobItem.Name).FirstOrDefault();
+                    if (record.Status == Constants.InProgress)
                     {
-                        PartitionKey = Source.Name,
-                        RowKey = blobItem.Name,
-                        Operation = Constants.Copy,
-                        Status = Constants.InProgress
-                    };
-                    Storage.ContainersTable.Execute(TableOperation.Insert(blobRecord));                    
+                        InProgress.Add(blobItem.Name);
+                    }
+                    else if (record.Status == Constants.Finished)
+                    {
+                        Finished.Add(blobItem.Name);
+                    }
+                    else if (record.Status == Constants.Failed || record == null)
+                    {
+                        StorageUtil.CopyBlobAsync(replicate.Source, replicate.Target, blobItem, accessSignature);
 
+                        InProgress.Add(blobItem.Name);
+
+                        var blobRecord = new BlobReplicateOperation()
+                        {
+                            PartitionKey = Source.Name,
+                            RowKey = blobItem.Name,
+                            Operation = Constants.Copy,
+                            Status = Constants.InProgress,
+                            ETag = "*"
+                        };
+                        Storage.ContainersTable.Execute(TableOperation.InsertOrReplace(blobRecord));
+                    }
+                    else
+                    {
+                        throw new NotSupportedException();
+                    }
                     sb.AppendFormat("{0}{1}{2}", blobItem.Name, blobItem.Properties.Length, blobItem.Properties.LastModified);
 
                     Total++;
-                }
+                });
                 token = result.ContinuationToken;
             } while (token != null);
 
-            logger.Info("Copying {0} blobs", InProgress.Count);
-
-            var record = new ContainerReplicateOperation()
+            if (InProgress.Count == 0)
             {
-                PartitionKey = "container",
-                RowKey = Source.Name,
-                Status = Constants.InProgress,
-                Hash = Hash.MD5(sb.ToString())
-            };
-
-            Storage.ContainersTable.Execute(TableOperation.Insert(record));
+                // Nothing in progress
+                logger.Info("{0} already copied with {1}/{2} blobs", Target.Name, Finished.Count, Total);
+                var containerRecord = new ContainerReplicateOperation()
+                {
+                    PartitionKey = "container",
+                    RowKey = Source.Name,
+                    Status = Constants.Finished,
+                    Hash = Hash.MD5(sb.ToString()),
+                    ETag = "*",
+                };
+                Storage.ContainersTable.Execute(TableOperation.InsertOrReplace(containerRecord));
+            }
+            else
+            {
+                logger.Info("{0} - copying {1} blobs",  Target.Name, InProgress.Count);
+                var containerRecord = new ContainerReplicateOperation()
+                {
+                    PartitionKey = "container",
+                    RowKey = Source.Name,
+                    Status = Constants.InProgress,
+                    Hash = Hash.MD5(sb.ToString()),
+                    ETag = "*",
+                };
+                Storage.ContainersTable.Execute(TableOperation.InsertOrReplace(containerRecord));
+            }                                   
         }
 
         public static bool AreEqual(CloudBlobContainer c1, CloudBlobContainer c2)

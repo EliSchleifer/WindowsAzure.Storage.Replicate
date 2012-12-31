@@ -37,20 +37,22 @@ namespace WindowsAzure.Storage.Replicate
             this.Target = new Repository(target);
             if (backupName == null)
             {
-                this.BackupName = string.Format("{0}-{1}-{2}", this.backupPrefix, source.Credentials.AccountName, DateTime.UtcNow.Ticks);
+                this.BackupName = string.Format("{0}{1}{2}", this.backupPrefix, source.Credentials.AccountName, DateTime.UtcNow.Ticks);
             }
             else
             {
                 this.BackupName = backupName;
             }
         }
+
+        public void OnTimer()
+        {
+            this.Blobs.OnTimer();
+        }
         
         public void BeginReplicate()
         {
             logger.Trace("{0:yyyy MM dd hh:mm:ss} Replicate started.", DateTime.UtcNow);
-
-            var table = Target.TableClient.GetTableReference(this.BackupName + "-containers");
-            table.CreateIfNotExists();
 
             this.Blobs = new BlobStorage(this);
             Blobs.BeginReplicate(1);
