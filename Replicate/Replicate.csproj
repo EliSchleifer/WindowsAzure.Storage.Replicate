@@ -71,7 +71,6 @@
     <Compile Include="Properties\AssemblyInfo.cs" />
     <Compile Include="Runtime.cs" />
     <Compile Include="StorageUtil.cs" />
-    <Compile Include="ThreadRunner.cs" />
     <Compile Include="Utilities\Hash.cs" />
     <Compile Include="Utilities\Registry.cs" />
     <Compile Include="Repository.cs" />
