@@ -27,9 +27,11 @@ namespace WindowsAzure.Storage.Replicate.FrontEnd
         private string source;
         private string target;
         private string backupName;
+        private int maxContainers;
         private Replicate replicate;
 
         public ObservableCollection<string> Logs { get; private set; }
+        public ObservableCollection<BlobContainerViewModel> Containers { get; private set; }
 
         public string Target 
         {
@@ -60,11 +62,21 @@ namespace WindowsAzure.Storage.Replicate.FrontEnd
                 registry.Write("backup_name", value);
             }
         }
-         
-        private RegistrySettings registry;
+
+        public int MaxContainers
+        {
+            get { return maxContainers; }
+            set
+            {
+                maxContainers = value;
+                registry.Write("max_containers", value.ToString());
+            }
+        }
 
         
-
+         
+        private RegistrySettings registry;
+        
         public Main()
         {
             Runtime.Initialize();
@@ -72,19 +84,21 @@ namespace WindowsAzure.Storage.Replicate.FrontEnd
             this.registry = new RegistrySettings(@"Software\WindowAzureReplicator");
             
             this.backupName = registry.Read("backup_name");
+            this.maxContainers = Int32.Parse(registry.Read("max_containers", "10"));
             this.source = registry.Read("source");
             this.target = registry.Read("target");
             this.Logs = new ObservableCollection<string>();
+            this.Containers = new ObservableCollection<BlobContainerViewModel>();
 
             InitializeComponent();
             this.DataContext = this;            
-
-
         }
 
         private void replicateClick(object sender, RoutedEventArgs e)
         {
             this.replicate = new Replicate(this.Source, this.Target, this.BackupName);
+            this.replicate.Blobs.BeginReplicateContainer += OnBeginReplicateContainer;
+            this.replicate.Blobs.EndReplicateContainer += OnEndReplicateContainer;
 
             DispatcherTimer dt = new DispatcherTimer()
             {
@@ -94,15 +108,11 @@ namespace WindowsAzure.Storage.Replicate.FrontEnd
             dt.Tick += (ds, de) =>
             {
                 this.replicate.OnTimer();
-
-                var containersInProgress = this.replicate.Blobs.InProgress.Count;
-                var containersFinished = this.replicate.Blobs.Finished.Count;
-                var containersTotal = this.replicate.Blobs.Total;
-
-                var containers = string.Format("Containers In:{0} Finished:{1} Total:{2}", containersInProgress, containersFinished, containersTotal);
-                this.Status.Content = containers;
+                if (this.replicate.Blobs.AreReplicated)
+                {
+                    dt.Stop();                    
+                }
             };
-
             dt.Start();
 
             var lt = new DispatcherTimer()
@@ -111,7 +121,7 @@ namespace WindowsAzure.Storage.Replicate.FrontEnd
             };
             lt.Tick += (ls, le) =>
             {
-                IList<string> logs = Runtime.MemoryTarget.Logs;
+                IList<string> logs = Runtime.MemoryTarget.Logs.ToArray();
                 foreach (var l in logs)
                 {
                     this.Logs.Add(l);
@@ -122,8 +132,34 @@ namespace WindowsAzure.Storage.Replicate.FrontEnd
 
             Task.Factory.StartNew(() =>
             {
-                this.replicate.BeginReplicate();
+                this.replicate.BeginReplicate(MaxContainers);
             });
+        }
+
+        void OnBeginReplicateContainer(object sender, BlobContainer container)
+        {
+            this.Dispatcher.BeginInvoke((Action)(() =>
+            {
+                this.Containers.Add(new BlobContainerViewModel(container));
+                UpdateStatus();
+            }));
+        }
+
+        void OnEndReplicateContainer(object sender, BlobContainer container)
+        {
+            this.Dispatcher.BeginInvoke((Action)(() =>
+            {
+                UpdateStatus();
+            }));
+        }
+
+        private void UpdateStatus()
+        {
+            var containersInProgress = this.replicate.Blobs.InProgress.Count;
+            var containersFinished = this.replicate.Blobs.Finished.Count;
+
+            var containers = string.Format("Copying {0}/{1} containers", containersFinished, containersFinished + containersInProgress);
+            this.Status.Content = containers;
         }
     }
 }

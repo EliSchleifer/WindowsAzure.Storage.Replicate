@@ -1,7 +1,7 @@
 ﻿<Window x:Class="WindowsAzure.Storage.Replicate.FrontEnd.Main"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="MainWindow" Height="350" Width="525">
+        Title="Azure Storage Replicate" Height="350" Width="525">
     <Grid>
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto"/>            
@@ -12,17 +12,39 @@
         </Grid.RowDefinitions>
         <Grid.ColumnDefinitions>
             <ColumnDefinition Width="Auto"/>
+            <ColumnDefinition Width="3*"/>
+            <ColumnDefinition Width="Auto"/>
             <ColumnDefinition Width="*"/>
         </Grid.ColumnDefinitions>
         <Label Grid.Row="0"  Content="Backup Name:" />
         <TextBox Grid.Row="0" Grid.Column="1" HorizontalAlignment="Stretch" VerticalAlignment="Top" Text="{Binding BackupName, Mode=TwoWay}"/>
+        <Label Grid.Row="0"  Grid.Column="2" Content="Max Containers:" />
+        <TextBox Grid.Row="0" Grid.Column="3" HorizontalAlignment="Stretch" VerticalAlignment="Top" Text="{Binding MaxContainers, Mode=TwoWay}"/>
         <Label Grid.Row="1"  Content="Source:" />
-        <TextBox Grid.Row="1" Grid.Column="1" HorizontalAlignment="Stretch" VerticalAlignment="Top" Text="{Binding Source, Mode=TwoWay}"/>
+        <TextBox Grid.Row="1" Grid.Column="1" Grid.ColumnSpan="3" HorizontalAlignment="Stretch" VerticalAlignment="Top" Text="{Binding Source, Mode=TwoWay}"/>
         <Label Grid.Row="2" Content="Target:" HorizontalAlignment="Left" VerticalAlignment="Top"/>
-        <TextBox Grid.Row="2" Grid.Column="1" HorizontalAlignment="Stretch" VerticalAlignment="Top" Text="{Binding Target, Mode=TwoWay}"/>
+        <TextBox Grid.Row="2" Grid.Column="1" Grid.ColumnSpan="3" HorizontalAlignment="Stretch" VerticalAlignment="Top" Text="{Binding Target, Mode=TwoWay}"/>
         
-        <Button Grid.Row="3" Padding="5" Margin="5" Grid.Column="1" HorizontalAlignment="Right" Click="replicateClick">Replicate</Button>
-        <Label x:Name="Status" Grid.Row="3" Padding="5" Margin="5" Grid.Column="0" Grid.ColumnSpan="2" HorizontalAlignment="Left" Content="Ready"/>
-        <ListBox Grid.Row="4" Grid.ColumnSpan="2" x:Name="logs" ItemsSource="{Binding Logs}" VerticalAlignment="Stretch" HorizontalAlignment="Stretch" Background="Green"/>
+        <Button Grid.Row="3" Padding="5" Margin="5" Grid.Column="3" HorizontalAlignment="Right" Click="replicateClick">Replicate</Button>
+        <Label x:Name="Status" Grid.Row="3" Padding="5" Margin="0" Grid.Column="0" Grid.ColumnSpan="3" HorizontalAlignment="Left" VerticalAlignment="Center" Content="Ready" FontWeight="Bold"/>
+        <TabControl Grid.Row="4" Grid.ColumnSpan="4">
+            <TabItem Header="Containers">
+                <ListView ItemsSource="{Binding Containers}">
+                    <ListView.View>
+                        <GridView>
+                            <GridViewColumn Width="150" Header="Name" DisplayMemberBinding="{Binding Name}"/>
+                            <GridViewColumn Width="200" Header="Status" DisplayMemberBinding="{Binding Status}"/>
+                            <GridViewColumn Width="75" Header="Progress" DisplayMemberBinding="{Binding PercentageComplete}"/>
+                            <GridViewColumn Width="75" Header="Errors" DisplayMemberBinding="{Binding Errors}"/>
+                        </GridView>
+                    </ListView.View>
+                </ListView>
+            </TabItem>
+            <TabItem Header="Status">
+                <ListBox Grid.Row="4" Grid.ColumnSpan="2" x:Name="logs" ItemsSource="{Binding Logs}" VerticalAlignment="Stretch" HorizontalAlignment="Stretch"/>
+            </TabItem>
+        </TabControl>
+     
+        
     </Grid>
 </Window>

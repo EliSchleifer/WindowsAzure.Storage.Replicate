@@ -1,4 +1,5 @@
 ﻿using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Linq;
@@ -11,18 +12,22 @@ using NLog;
 
 namespace WindowsAzure.Storage.Replicate
 {
+    public delegate void BlobContainerEventHandler(object sender, BlobContainer container);
+
     public class BlobStorage
     {
         public Replicate Replicate { get; private set;}
-        public Dictionary<string, BlobContainer> InProgress;
-        public Dictionary<string, BlobContainer> Finished;
-        public int Total { get; private set; }
+        public ConcurrentDictionary<string, BlobContainer> InProgress;
+        public ConcurrentDictionary<string, BlobContainer> Finished;
+
+        public event BlobContainerEventHandler BeginReplicateContainer;
+        public event BlobContainerEventHandler EndReplicateContainer;
 
         public BlobStorage(Replicate replicate)
         {
             this.Replicate = replicate;
-            this.InProgress = new Dictionary<string, BlobContainer>();
-            this.Finished = new Dictionary<string, BlobContainer>();
+            this.InProgress = new ConcurrentDictionary<string, BlobContainer>();
+            this.Finished = new ConcurrentDictionary<string, BlobContainer>();
         }
 
         private CloudTable containersTable;
@@ -38,6 +43,15 @@ namespace WindowsAzure.Storage.Replicate
                     this.containersTable = table;
                 }
                 return containersTable;
+            }
+        }
+
+        public bool AreReplicated
+        {
+            get
+            {
+                //Edge case this will say false forever for empty blob storage
+                return InProgress.Count == 0 && Finished.Count > 0;
             }
         }
 
@@ -66,6 +80,13 @@ namespace WindowsAzure.Storage.Replicate
                     var c = new BlobContainer(this, cloudContainer);
                     InProgress[cloudContainer.Name] = c;
 
+                    c.MadeProgress += OnMadeProgress;                                                          
+
+                    if (BeginReplicateContainer != null)
+                    {
+                        BeginReplicateContainer(this, c);
+                    }
+
                     c.BeginReplicate();
 
                     Interlocked.Decrement(ref limit);
@@ -74,6 +95,22 @@ namespace WindowsAzure.Storage.Replicate
             } while(token != null && limit > 0);
 
             return limit;
+        }
+
+        void OnMadeProgress(object sender, BlobContainer container)
+        {
+            if (container.IsReplicated)
+            {
+                BlobContainer ignore;
+                if (InProgress.TryRemove(container.Name, out ignore))
+                {
+                    Finished[container.Name] = container;
+                    if (EndReplicateContainer != null)
+                    {
+                        EndReplicateContainer(this, container);
+                    }
+                }
+            }
         }
     }
 
@@ -85,11 +122,15 @@ namespace WindowsAzure.Storage.Replicate
         public List<string> InProgress;
         public List<string> Finished;
         public List<string> Failed;
-        public int Total { get; private set; }
+        public int Total;
 
         private DateTime lastChecked = DateTime.MaxValue;
 
         private static Logger logger = LogManager.GetLogger("BlobContainer");
+
+        public event BlobContainerEventHandler MadeProgress;
+
+        public string Name { get { return Source.Name; } }
 
         public bool IsReplicated
         {
@@ -106,6 +147,14 @@ namespace WindowsAzure.Storage.Replicate
             this.InProgress = new List<string>();
             this.Finished = new List<string>();
             this.Failed = new List<string>();            
+        }
+
+        private void RaiseMadeProgress()
+        {
+            if (MadeProgress != null)
+            {
+                MadeProgress(this, this);
+            }
         }
 
         public void OnTimer()
@@ -125,6 +174,12 @@ namespace WindowsAzure.Storage.Replicate
                     foreach (var dest in Target.ListBlobs(null, true, BlobListingDetails.Copy))
                     {
                         var blob = dest as ICloudBlob;
+                        if (!InProgress.Contains(blob.Name))
+                        {
+                            // do not repeat status changes for finished blobs
+                            continue;
+                        }
+
                         if (blob.CopyState.Status == CopyStatus.Success)
                         {
                             var blobRecord = new BlobReplicateOperation()
@@ -135,10 +190,14 @@ namespace WindowsAzure.Storage.Replicate
                                 Status = Constants.Finished,
                                 ETag = "*"
                             };
-                            Storage.ContainersTable.Execute(TableOperation.Replace(blobRecord));                                                
+                            Storage.ContainersTable.Execute(TableOperation.Replace(blobRecord));
 
-                            InProgress.Remove(blob.Name);
-                            Finished.Add(blob.Name);
+                            lock (this)
+                            {
+                                InProgress.Remove(blob.Name);
+                                Finished.Add(blob.Name);
+                            }
+                            RaiseMadeProgress();
                         }
                         else if (blob.CopyState.Status == CopyStatus.Failed ||
                                 blob.CopyState.Status == CopyStatus.Aborted)
@@ -151,9 +210,14 @@ namespace WindowsAzure.Storage.Replicate
                                 Status = Constants.Failed,
                                 ETag = "*"
                             };
-                            Storage.ContainersTable.Execute(TableOperation.Replace(blobRecord));                                                
+                            Storage.ContainersTable.Execute(TableOperation.Replace(blobRecord));
 
-                            Failed.Add(blob.Name);
+                            lock (this)
+                            {
+                                InProgress.Remove(blob.Name);
+                                Failed.Add(blob.Name);
+                            }
+                            RaiseMadeProgress();
                         }
                         else if (blob.CopyState.Status == CopyStatus.Invalid)
                         {
@@ -170,12 +234,13 @@ namespace WindowsAzure.Storage.Replicate
                     {
                         if (Failed.Count == 0)
                         {
-                            logger.Info("EndReplicate {0}", Source.Name);
+                            logger.Info("EndReplicate {0}", Source.Name);                            
                         }
                         else
                         {
                             logger.Info("EndReplicate {0} WITH ERRORS", Source.Name);
                         }
+                        RaiseMadeProgress();
                     }
 
                     lastChecked = DateTime.UtcNow;
@@ -242,15 +307,7 @@ namespace WindowsAzure.Storage.Replicate
                 Parallel.ForEach(result.Results.OfType<ICloudBlob>(), new ParallelOptions() { MaxDegreeOfParallelism = 10 }, blobItem =>
                 {
                     var record = records.Where(r => r.RowKey == blobItem.Name).FirstOrDefault();
-                    if (record.Status == Constants.InProgress)
-                    {
-                        InProgress.Add(blobItem.Name);
-                    }
-                    else if (record.Status == Constants.Finished)
-                    {
-                        Finished.Add(blobItem.Name);
-                    }
-                    else if (record.Status == Constants.Failed || record == null)
+                    if (record == null || record.Status == Constants.Failed)
                     {
                         StorageUtil.CopyBlobAsync(replicate.Source, replicate.Target, blobItem, accessSignature);
 
@@ -266,13 +323,27 @@ namespace WindowsAzure.Storage.Replicate
                         };
                         Storage.ContainersTable.Execute(TableOperation.InsertOrReplace(blobRecord));
                     }
+                    else if(record.Status == Constants.InProgress)
+                    {
+                        lock (this)
+                        {
+                            InProgress.Add(blobItem.Name);
+                        }
+                    }
+                    else if (record.Status == Constants.Finished)
+                    {
+                        lock (this)
+                        {
+                            Finished.Add(blobItem.Name);
+                        }
+                    }                    
                     else
                     {
                         throw new NotSupportedException();
                     }
                     sb.AppendFormat("{0}{1}{2}", blobItem.Name, blobItem.Properties.Length, blobItem.Properties.LastModified);
 
-                    Total++;
+                    Interlocked.Increment(ref Total);
                 });
                 token = result.ContinuationToken;
             } while (token != null);
@@ -290,6 +361,7 @@ namespace WindowsAzure.Storage.Replicate
                     ETag = "*",
                 };
                 Storage.ContainersTable.Execute(TableOperation.InsertOrReplace(containerRecord));
+                RaiseMadeProgress();
             }
             else
             {
@@ -303,6 +375,7 @@ namespace WindowsAzure.Storage.Replicate
                     ETag = "*",
                 };
                 Storage.ContainersTable.Execute(TableOperation.InsertOrReplace(containerRecord));
+                RaiseMadeProgress();
             }                                   
         }
 
